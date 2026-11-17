@@ -1,0 +1,333 @@
+from ti_draw import *
+from ti_system import *
+from math import *
+from random import *
+
+# --- TI-84 PLUS CE KEY CODES ---
+K_UP = 25
+K_DOWN = 34
+K_LEFT = 24
+K_RIGHT = 26
+K_2ND = 21
+K_ALPHA = 31
+K_ENTER = 105
+K_CLEAR = 45
+
+# --- RETRO HOCKEY PLAYER SPRITE (12x16 pixels) ---
+# 0 = Transparent, 1 = Skin, 2 = Jersey (Team Color), 3 = Pants, 4 = Skates, 5 = Helmet
+H_SPRITE = [
+    [0,0,0,5,5,5,5,5,0,0,0,0],
+    [0,0,5,5,5,5,5,5,5,0,0,0], # Helmet
+    [0,0,1,1,1,1,1,1,1,0,0,0], # Face
+    [0,0,0,1,1,1,1,1,0,0,0,0],
+    [0,2,2,2,2,2,2,2,2,2,0,0], # Jersey
+    [2,2,2,3,2,2,2,3,2,2,2,0],
+    [2,2,2,2,2,2,2,2,2,2,2,0],
+    [0,2,2,2,2,2,2,2,2,2,0,0],
+    [0,3,3,3,3,3,3,3,3,3,0,0], # Pants
+    [0,3,3,0,0,0,0,3,3,0,0,0],
+    [0,0,1,1,0,0,1,1,0,0,0,0], # Legs
+    [0,0,1,1,0,0,1,1,0,0,0,0],
+    [0,0,4,4,0,0,4,4,0,0,0], # Skates
+    [0,4,4,4,0,0,4,4,4,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0,0,0]
+]
+
+# --- GAME STATE ---
+px, py = 75, 130
+dx, dy = 190, 130
+score = 0
+cpu = 0
+period_time = 20.0
+period = 1
+skating = 0
+check_cd = 0
+aiming = False
+aim_ang = 45.0
+aim_dir = 1
+aim_pwr = 0.0
+pwr_dir = 1
+phase = 0  # 0=skating, 1=angle, 2=power, 3=shot
+bx, by, bvx, bvy = 0.0, 0.0, 0.0, 0.0
+msg = ""
+msg_t = 0
+goal_x, goal_y1, goal_y2 = 300, 88, 132
+
+def draw_rink():
+  # Arena / Glass backdrop
+  set_color(180, 210, 235)
+  fill_rect(0, 0, 320, 52)
+  for cx in range(8, 320, 20):
+    for cy in range(14, 44, 10):
+      set_color(150, 185, 215)
+      fill_circle(cx, cy, 2)
+
+  # Ice Rink Surface
+  set_color(240, 245, 252)
+  fill_rect(0, 52, 320, 158)
+
+  # Rink Markings (Red Center Line & Blue Lines)
+  set_color(225, 45, 45)
+  set_pen("medium", "solid")
+  draw_line(160, 52, 160, 210) # Center Red Line
+  draw_circle(160, 131, 32)    # Center Faceoff Circle
+
+  set_color(35, 95, 215)
+  draw_line(100, 52, 100, 210) # Blue Line 1
+  draw_line(220, 52, 220, 210) # Blue Line 2
+
+  # Goal Crease & Net Area (Right side)
+  set_color(225, 45, 45)
+  draw_arc(274, 98, 32, 66, 900, 1800)
+  set_pen("thin", "solid")
+
+  # Hockey Goal Cage & Net
+  set_color(30, 30, 30)
+  fill_rect(301, 82, 6, 98)
+  set_color(210, 220, 235)
+  draw_rect(300, 82, 12, 50)
+  for ny in range(86, 128, 6):
+    draw_line(301, ny, 311, ny)
+  for nx in range(303, 311, 3):
+    draw_line(nx, 83, nx, 131)
+
+def draw_pixel_player(x, y, is_cpu, step, has_puck):
+  ix, iy = int(x) - 6, int(y) - 8
+  # Ice shadow
+  set_color(210, 225, 240)
+  fill_rect(ix + 1, iy + 14, 10, 3)
+
+  for r in range(16):
+    for c in range(12):
+      val = H_SPRITE[r][c]
+      if val == 0:
+        continue
+      elif val == 1:
+        set_color(145, 92, 56) if not is_cpu else set_color(228, 178, 134)
+      elif val == 2: # Jerseys: Blue (Player) vs White/Red (CPU)
+        set_color(24, 85, 210) if not is_cpu else set_color(210, 40, 40)
+      elif val == 3: # Pants
+        set_color(30, 30, 35) if not is_cpu else set_color(220, 220, 220)
+      elif val == 4: # Skates
+        set_color(180, 185, 195)
+      elif val == 5: # Helmet
+        set_color(24, 85, 210) if not is_cpu else set_color(210, 40, 40)
+
+      bo = 1 if (step % 4 < 2 and r > 9) else 0
+      set_pixel(ix + c, iy + r + bo)
+
+  # Hockey Stick & Puck
+  set_color(120, 75, 40)
+  if not is_cpu:
+    draw_line(int(x) + 4, int(y) + 2, int(x) + 11, int(y) + 8)
+    draw_line(int(x) + 8, int(y) + 8, int(x) + 13, int(y) + 7)
+    if has_puck:
+      draw_puck(int(x) + 12, int(y) + 8)
+  else:
+    draw_line(int(x) - 4, int(y) + 2, int(x) - 11, int(y) + 8)
+    draw_line(int(x) - 8, int(y) + 8, int(x) - 13, int(y) + 7)
+
+def draw_puck(x, y):
+  ix, iy = int(x), int(y)
+  set_color(20, 20, 25)
+  fill_circle(ix, iy, 3)
+  set_color(120, 130, 145)
+  draw_circle(ix, iy, 3)
+
+def draw_hud():
+  set_color(15, 18, 28)
+  fill_rect(0, 0, 320, 16)
+  set_color(100, 200, 250)
+  draw_text(6, 2, "HOME:" + str(score))
+  set_color(240, 85, 85)
+  draw_text(98, 2, "AWAY:" + str(cpu))
+  set_color(255, 255, 255)
+  draw_text(192, 2, "P" + str(period) + " " + str(int(period_time)) + "s")
+  if check_cd == 0:
+    set_color(80, 235, 130)
+    draw_text(260, 2, "[CHECK]")
+
+def draw_arc_guide():
+  rad = aim_ang * 3.14159 / 180.0
+  spd = 9.0 + (aim_pwr / 100.0) * 8.0 if phase == 2 else 13.0
+  vx = cos(rad) * spd
+  vy = -sin(rad) * spd
+  tx, ty = float(px + 6), float(py - 4)
+  for i in range(1, 15):
+    tx += vx * 1.3
+    ty += vy * 1.3
+    if i % 2 == 0:
+      set_color(255, 255, 255) if phase == 1 else set_color(80, 250, 120)
+      fill_circle(int(tx), int(ty), 2)
+
+  if phase == 2:
+    set_color(20, 20, 20)
+    fill_rect(int(px) - 18, int(py) - 32, 36, 6)
+    set_color(60, 235, 100) if 58 <= aim_pwr <= 78 else set_color(250, 190, 40)
+    fill_rect(int(px) - 17, int(py) - 31, int(aim_pwr * 0.34), 4)
+
+def reset_puck(scored):
+  global px, py, dx, dy, phase, period_time, cpu, period, msg, msg_t
+  if scored:
+    globals()['score'] += 1
+    msg = "GOAL! SLAP SHOT SCORED!"
+  else:
+    msg = "SAVED! GOALIE BLOCKS!"
+    cpu += 1
+  msg_t = 18
+  px, py = 75, 130
+  dx, dy = 190, 130
+  phase = 0
+  period_time = max(0.0, period_time - 4.0)
+
+# --- TITLE SCREEN ---
+clear()
+draw_rink()
+set_color(15, 18, 28)
+fill_rect(35, 55, 250, 95)
+set_color(100, 200, 250)
+draw_rect(35, 55, 250, 95)
+draw_text(72, 66, "CE HOCKEY: STRIKER")
+set_color(255, 255, 255)
+draw_text(52, 88, "ARROWS: Skate  ALPHA: Check")
+draw_text(52, 106, "2ND / ENTER: Aim & Slap Shot")
+set_color(80, 235, 130)
+draw_text(68, 128, "PRESS ANY KEY TO PLAY")
+show_draw()
+wait_key()
+
+# --- MAIN GAME LOOP ---
+while period <= 3:
+  k = get_key(0)
+  if k == K_CLEAR:
+    break
+
+  if phase == 0:
+    moved = False
+    if k == K_UP and py > 60:
+      py -= 5
+      moved = True
+    elif k == K_DOWN and py < 198:
+      py += 5
+      moved = True
+    elif k == K_LEFT and px > 15:
+      px -= 5
+      moved = True
+    elif k == K_RIGHT and px < 275:
+      px += 5
+      moved = True
+
+    if k == K_ALPHA and check_cd == 0:
+      px = min(280, px + 20)
+      py += randint(-10, 10)
+      check_cd = 25
+      moved = True
+
+    if moved:
+      skating += 1
+    if check_cd > 0:
+      check_cd -= 1
+
+    # CPU Skater AI
+    if dx > px + 16:
+      dx -= 2
+    elif dx < px + 12:
+      dx += 2
+    if dy < py:
+      dy += 2
+    elif dy > py:
+      dy -= 2
+
+    if abs(px - dx) < 12 and abs(py - dy) < 10 and check_cd < 18:
+      msg = "CHECKED! LOSS OF PUCK"
+      msg_t = 15
+      px, py = 65, 130
+
+    if k == K_2ND or k == K_ENTER:
+      phase = 1
+      aim_ang = 42.0
+      aim_dir = 1
+
+  elif phase == 1:
+    aim_ang += aim_dir * 3.5
+    if aim_ang > 70:
+      aim_dir = -1
+    elif aim_ang < 25:
+      aim_dir = 1
+    if k == K_2ND or k == K_ENTER:
+      phase = 2
+      aim_pwr = 10.0
+      pwr_dir = 1
+
+  elif phase == 2:
+    aim_pwr += pwr_dir * 6.0
+    if aim_pwr >= 100:
+      pwr_dir = -1
+    elif aim_pwr <= 5:
+      pwr_dir = 1
+    if k == K_2ND or k == K_ENTER:
+      phase = 3
+      rad = aim_ang * 3.14159 / 180.0
+      spd = 9.0 + (aim_pwr / 100.0) * 8.0
+      bx, by = float(px + 12), float(py + 8)
+      bvx = cos(rad) * spd
+      bvy = -sin(rad) * spd
+
+  elif phase == 3:
+    bx += bvx
+    by += bvy
+    if bx >= 298 and 82 <= by <= 132:
+      reset_puck(True)
+    elif bx > 310 or by < 52 or by > 205:
+      reset_puck(False)
+
+  if phase < 3:
+    period_time -= 0.12
+    if period_time <= 0:
+      if period < 3:
+        period += 1
+        period_time = 20.0
+        msg = "PERIOD END"
+        msg_t = 22
+      else:
+        period = 4
+
+  # --- RENDER FRAME ---
+  draw_rink()
+  draw_hud()
+
+  if py < dy:
+    draw_pixel_player(px, py, False, skating, phase < 3)
+    draw_pixel_player(dx, dy, True, skating, False)
+  else:
+    draw_pixel_player(dx, dy, True, skating, False)
+    draw_pixel_player(px, py, False, skating, phase < 3)
+
+  if phase in (1, 2):
+    draw_arc_guide()
+  elif phase == 3:
+    draw_puck(bx, by)
+
+  if msg_t > 0:
+    set_color(15, 18, 28)
+    fill_rect(80, 24, 160, 18)
+    set_color(100, 200, 250)
+    draw_rect(80, 24, 160, 18)
+    draw_text(92, 27, msg)
+    msg_t -= 1
+
+  show_draw()
+
+# --- GAME OVER SCREEN ---
+set_color(15, 18, 28)
+fill_rect(50, 68, 220, 72)
+set_color(100, 200, 250)
+draw_rect(50, 68, 220, 72)
+res = "FINAL: YOU WIN!" if score > cpu else "FINAL: YOU LOSE" if score < cpu else "FINAL: DRAW"
+draw_text(88, 78, res)
+set_color(255, 255, 255)
+draw_text(102, 100, "FINAL: " + str(score) + " - " + str(cpu))
+draw_text(74, 120, "PRESS CLEAR TO EXIT")
+show_draw()
+wait_key()
